@@ -1,0 +1,154 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Wed Nov 28 00:07:07 2018
+
+Program using a neural network to try to find the key for a Bifid Cipher
+
+@author: Peter Hopkinson
+"""
+
+from random import shuffle
+import tensorflow as tf
+import tensorflow.contrib.slim as slim
+import math
+import string
+
+""" 1) Load training and evaluation data """
+
+truncated_alphabet = string.ascii_uppercase.replace("J", "")  # "ABCDEFGHIKLMNOPQRSTUVWXYZ"
+alphabet_length = len(truncated_alphabet)
+
+Sample_Input = "INCRYPTOGRAPHYACIPHERORCYPHERISANALGORITHMFORPERFORMINGENCRYPTIONORDECRYPTIONASERIESOFWELLDEFINEDSTEPSTHATCANBEFOLLOWEDASAPROCEDUREANALTERNATIVELESSCOMMONTERMISENCIPHERMENTTOENCIPHERORENCODEISTOCONVERTINFORMATIONINTOCIPHERORCODEINCOMMONPARLANCECIPHERISSYNONYMOUSWITHCODEASTHEYAREBOTHASETOFSTEPSTHATENCRYPTAMESSAGEHOWEVERTHECONCEPTSAREDISTINCTINCRYPTOGRAPHYESPECIALLYCLASSICALCRYPTOGRAPHY"
+Sample_Output = "UHCRTKSPCBAPHYMHIPFOSEYNTKFORITTITXVSLNAAYHETENLHETVUHBKVSSVHWNPNOYIVQSVHWNPITRORINQTLLPZUBPFIUOCHRPHQTHHADTVRILOLQELPDATTHLYQVWNUIWITQINLITRAUKLESSCOAGRQRPTVNHUQBTAQNLFKNTSPUQBTAQNLSLUQCOBPNHSPCOUYNLRAIRSLADRARQUHSPBTAQNLSLCOBPUHCOAGRQAWOUFHBOBTAQNLNHSYNONYHKNNLATHCOBPHHTHNXHFVLSWATROSPHNRPHQTHHAUQCRTKTAFKSSMMIQOWUXNLTHVQRQBOHWTTREBASTUHCTUHCRTKSPCBAPHYNQFZBTPFQVKRHHRTDTXNSVHWYXTIAQY"
+Sample_Mode = 2
+
+global Input_Text, Output_Text, Mode
+Input_Text, Output_Text, Mode = Sample_Input, Sample_Output, Sample_Mode
+
+def clip_text(input_text=Sample_Input, output_text=Sample_Output, mode=Sample_Mode):
+    input_length = len(input_text)
+    output_length = len(output_text)
+    num_blocks = min(math.floor(input_length/mode), math.floor(output_length/mode))    
+    return(input_text[:mode*num_blocks], output_text[:mode*num_blocks], num_blocks)
+### end clip_text
+
+class DataPoint:
+    # class DataPoint associates an input with an output (in this case an input letter pair with an output letter pair)
+    # using a class structure makes for easy shuffling
+    def __init__(self, input_string, output_string, mode, block_number):
+        self.input_data = [(truncated_alphabet.index(x)+0.5)/alphabet_length for x in input_string[block_number:block_number + mode]]
+        self.output_data = [truncated_alphabet.index(x) for x in output_string[block_number:block_number + mode]]
+### end DataPoint
+
+train_input, train_output, train_size = clip_text(Sample_Input, Sample_Output, Sample_Mode)
+training_set = [DataPoint(train_input, train_output, Sample_Mode, x) for x in range(train_size)]
+batch_size = train_size # could experiment with other values, e.g. 1, train_size, etc
+
+""" 2) Define network structure and initialise session """
+
+# placeholder variables
+plaintext = tf.placeholder(tf.float32, [None, Sample_Mode]) # Number of examples, number of inputs
+ciphertext = tf.placeholder(tf.int64, [None, Sample_Mode]) # Number of examples, number of outputs
+
+"""Direct Inference, a Polybius Square is not generated"""
+# network layers
+with slim.arg_scope([slim.fully_connected],
+                      activation_fn=tf.nn.relu,
+                      weights_initializer=tf.truncated_normal_initializer(stddev=0.01),
+                      weights_regularizer=slim.l2_regularizer(0.005)):
+    net_layer = slim.fully_connected(plaintext, 100*Sample_Mode)
+    net_layer = slim.fully_connected(net_layer, 50*Sample_Mode)
+    net_layer = slim.fully_connected(net_layer, 50*Sample_Mode)
+    prediction = slim.fully_connected(net_layer, 25*Sample_Mode)
+    prediction = tf.reshape(prediction, [batch_size, Sample_Mode, 25])
+
+# backpropogation variables
+cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=ciphertext, logits=prediction)
+entropy_sum = tf.reduce_sum(cross_entropy)
+entropy_product = tf.reduce_prod(1+(cross_entropy/100))
+optimizer = tf.train.AdamOptimizer()
+minimize = optimizer.minimize(entropy_sum)
+# validation test
+outcome = tf.argmax(prediction, axis=2)
+check_predictions = tf.equal(ciphertext, outcome)
+error = tf.reduce_mean(tf.cast(check_predictions, tf.float32))
+
+# initialize session
+init_op = tf.global_variables_initializer()
+sess = tf.Session()
+sess.run(init_op)
+print("Neural net intialised, sample data loaded.")
+
+""" 3) Train network """
+
+def train_network(num_epochs=2000):
+    # run training
+    no_of_batches = int(train_size / batch_size)
+    accuracy = sess.run(error, {plaintext: [element.input_data for element in training_set][:batch_size], ciphertext: [element.output_data for element in training_set][:batch_size]})
+    print("Accuracy ", accuracy)
+    for epoch in range(num_epochs): # start epoch
+        shuffle(training_set)
+        ptr = 0
+        for j in range(no_of_batches): # cycle through all batches within training data
+            batch = training_set[ptr:ptr+batch_size]
+            inp = [element.input_data for element in batch]
+            out = [element.output_data for element in batch]
+            ptr+=batch_size
+            sess.run(minimize, {plaintext: inp, ciphertext: out}) # run backpropogation
+        if epoch-(math.floor(epoch/10)*10) is 9: print("Epoch ",str(epoch+1)) # print every 10th epoch (the system actually labels these as the ###9th epoch since it treats the first as epoch zero)
+        if epoch-(math.floor(epoch/100)*100) is 99:
+            accuracy = sess.run(error, {plaintext: [element.input_data for element in training_set][:batch_size], ciphertext: [element.output_data for element in training_set][:batch_size]})
+            loss = sess.run(entropy_sum, {plaintext: [element.input_data for element in training_set][:batch_size], ciphertext: [element.output_data for element in training_set][:batch_size]})
+            loss_product = sess.run(entropy_product, {plaintext: [element.input_data for element in training_set][:batch_size], ciphertext: [element.output_data for element in training_set][:batch_size]})
+            print("Accuracy: ", accuracy, ", Loss: ", loss, loss_product)
+### end train_network
+    
+""" 4) Evaluate model, this stage is essentially reading the answer rather than actually confirming that the network has produced a viable solution """
+
+def eval_network():
+
+    return()
+### end eval_network
+
+""" 5) User interface """
+    
+def main():
+    # this function is run if the module is opened as a standalone module
+    print("Main menu. Please choose from the following options:")
+    print("1) Enter new input string")
+    print("2) Enter new output string")
+    print("3) Select mode")
+    print("4) Display current settings")
+    print("5) Train model")
+    print("6) Evaluate model")
+    print("7) Quit")
+    user_input = input("Enter your choice: ")
+    if user_input == str(1):
+        Input_Text = input("Enter new input string:")
+    elif user_input == str(2):
+        Output_Text = input("Enter new output string:")
+    elif user_input == str(3):
+        new_mode = input("Enter an integer value to represent the new mode:")
+        if isinstance(new_mode, int) and new_mode > 0:
+            Mode = new_mode
+        else: print("Invalid entry, mode not updated. Mode needs to be a positive integer.")
+    elif user_input == str(4):
+        print("Input String: " + Input_Text)
+        print ("Output String: " + Output_Text)
+        print("Mode: " + Mode)
+    elif user_input == str(5):
+        train_network()
+    elif user_input == str(6):
+        # eval_network()
+        print("Model evaluation not implemented")
+    elif user_input == str(7):
+        return
+    else: print("Menu option not recognised. You need to enter an integer value corresponding to the appropriate option.")
+    # after completing the menu option we want to return to the main menu, notice that this doesn't happen if the user elected to quit    
+    main()
+### end main
+
+if __name__ == "__main__":
+    # checks if the program is being used as a standalone module (rather than being imported by another module)
+    # if in standalone mode then run the main method
+    main()

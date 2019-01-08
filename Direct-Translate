@@ -2,7 +2,8 @@
 """
 Created on Wed Nov 28 00:07:07 2018
 
-Program using a neural network to try to find the key for a Bifid Cipher
+Program using a neural network to replicate a Bifid Cipher
+(without requiring knowledge of the key)
 
 @author: Peter Hopkinson
 """
